@@ -1,345 +1,558 @@
-import streamlit as st
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import os
-import math
-from ai_core import graph, handle_followup, data_description, custom_repl
+import json
 
-# --- Session State Initialization ---
-if "dfs" not in st.session_state:
-    st.session_state.dfs = []
-if "state" not in st.session_state:
-    st.session_state.state = None
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "followup_counter" not in st.session_state:
-    st.session_state.followup_counter = 0
-if "figure_paths_history" not in st.session_state:
-    st.session_state.figure_paths_history = []
+import matplotlib
+matplotlib.use("Agg")
 
-st.set_page_config(page_title="AI Data Analyst", layout="wide")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
 
-st.title("AI-Powered Data Analyst")
+from ai_core import graph, data_description, llm, get_llm
 
-#st.markdown("Upload CSV/XLSX files and ask a question. The system will analyze your data, run code, and give recommendations!")
+BG_MAIN = "#1e1e1e"
+BG_PANEL = "#252526"
+BG_INPUT = "#2d2d2d"
+FG_TEXT = "#d4d4d4"
+ACCENT = "#0e639c"
 
-# --- File Uploader ---
-uploaded_files = st.file_uploader("Upload CSV/XLSX files and ask a question. The system will analyze your data, run code, and give recommendations!", type=["csv", "xlsx", "xls"], accept_multiple_files=True, key="main_uploader")
+FONT_UI = ("Segoe UI", 10)
+FONT_CODE = ("Consolas", 10)
 
-if uploaded_files:
-    for i, file in enumerate(uploaded_files, start=1):
-        ext = file.name.split(".")[-1].lower()
-        try:
-            if ext == "csv":
-                df = pd.read_csv(file)
-            else:
-                df = pd.read_excel(file)
-            
-            description_initial = st.text_input(f"Enter description for {file.name}", f"User uploaded file: {file.name}", key= f"initial_file{i}")
-
-            temp_file_name = file.name.split(".")[0]
-
-            if temp_file_name not in [x['name'] for x in st.session_state.dfs]:
-
-                st.session_state.dfs.append({
-                    "name": temp_file_name,
-                    "data": df,
-                    "description": description_initial
-                })
-
-            st.success(f"✅ Loaded: {file.name} as {temp_file_name}")
-        except Exception as e:
-            st.error(f"❌ Failed to read {file.name}: {e}")
-
-# --- User Query ---
-st.markdown("### 💬 Enter your analysis query:")
-user_query = st.text_area("Example: 'Find high-risk suppliers who had highest spend'", height=100)
-
-# --- Submit Query Button ---
-if st.button("🚀 Run Analysis", type="primary") and st.session_state.dfs and user_query.strip():
-
-    initial_state = {
-        "dfs": st.session_state.dfs,
-        "user_query": user_query.strip()
+# Theme definitions
+THEMES = {
+    "dark": {
+        "BG_MAIN": "#1e1e1e",
+        "BG_PANEL": "#252526",
+        "BG_INPUT": "#2d2d2d",
+        "FG_TEXT": "#d4d4d4",
+        "ACCENT": "#0e639c",
+    },
+    "light": {
+        "BG_MAIN": "#ffffff",
+        "BG_PANEL": "#f3f3f3",
+        "BG_INPUT": "#eeeeee",
+        "FG_TEXT": "#333333",
+        "ACCENT": "#0078d4",
     }
-    with st.spinner("Processing your query with LangGraph..."):
+}
+
+CONFIG_FILE = "config.json"
+
+def load_config():
+    """Load configuration from config.json"""
+    if os.path.exists(CONFIG_FILE):
         try:
-            result = graph.invoke(initial_state)
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return get_default_config()
+    return get_default_config()
 
-            st.session_state.state = result
-            st.session_state.history = [result]
-            st.session_state.followup_counter = 0
-            st.session_state.figure_paths_history = []  # Reset figure history
+def get_default_config():
+    """Return default configuration"""
+    return {
+        "theme": "dark",
+        "llm_backend": "groq",
+        "groq_api_key": "gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "openai_api_key": "",
+        "ollama_model": "llama3.1:8b"
+    }
 
-            for figure_path in result.get("figure_paths", []):
-                st.session_state.figure_paths_history.append(figure_path)
-        except Exception as e:
-            st.error(f"❌ Error while processing: {e}")
+def save_config(config):
+    """Save configuration to config.json"""
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
 
-# --- Show Results ---
-if st.session_state.state:
-    st.divider()
-    st.markdown(f'## User Query: {st.session_state.state.get("user_query", "No analysis found.")}')
 
-    st.subheader("Analysis Summary")
+class SettingsDialog:
+    """Settings dialog for configuring Theme and LLM"""
 
-    # --- Show Figures for Current Query Only ---
-    figure_paths = st.session_state.state.get("figure_paths", [])
-    if figure_paths:
-        st.subheader("📊 Visualizations")
-        max_per_row = 2
-        num_rows = math.ceil(len(figure_paths) / max_per_row)
+    def __init__(self, parent, config, on_settings_change):
+        self.config = config
+        self.on_settings_change = on_settings_change
+        self.result = None
 
-        for row in range(num_rows):
-            cols = st.columns(max_per_row)
-            for i in range(max_per_row):
-                idx = row * max_per_row + i
-                if idx < len(figure_paths):
-                    fig_path = figure_paths[idx]
-                    if os.path.exists(fig_path):
-                        with cols[i]:
-                            st.image(fig_path, use_container_width=True, caption=f"Figure {idx + 1}")
-                    else:
-                        with cols[i]:
-                            st.warning(f"⚠️ Image missing: {fig_path}")
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Settings")
+        self.dialog.geometry("450x550")
+        self.dialog.resizable(False, False)
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
 
-    with st.expander("📜 Generated Python Code"):
-        st.code(st.session_state.state.get("generated_code", ""), language="python")
+        self.build_dialog()
 
-    with st.expander("🚀 Execution Output"):
-        st.code(st.session_state.state.get("execution_output", ""), language="text")
+        # Center the dialog
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.dialog.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.dialog.winfo_height() // 2)
+        self.dialog.geometry(f"+{x}+{y}")
 
-    st.subheader("📚 Context Ledger")
-    ledger = st.session_state.state.get("context_ledger", {})
-    for df_name, info in ledger.items():
-        with st.expander(f"📊 {df_name} - {info['description']}"):
-            st.json(info["summary"])
+    def build_dialog(self):
+        """Build the settings dialog UI"""
+        main_frame = tk.Frame(self.dialog, bg=BG_MAIN)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
-    # --- Recommended Follow-ups ---
-    st.subheader("🤔 Recommended Follow-up Queries")
-    followups = st.session_state.state.get("recommended_analysis", [])
-    for i, question in enumerate(followups):
-        if st.button(f"🔁 {question}", key=f"followup_{st.session_state.followup_counter}_{i}"):
+        # Theme Section
+        tk.Label(main_frame, text="Theme", bg=BG_MAIN, fg=FG_TEXT,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 8))
 
-            with st.spinner("Generating follow-up..."):
-                try:
-                    followup_state = handle_followup(question, st.session_state.state)
-                    st.session_state.state = followup_state
-                    st.session_state.history.append(followup_state)
-                    st.session_state.followup_counter += 1
+        theme_frame = tk.Frame(main_frame, bg=BG_INPUT, relief="flat")
+        theme_frame.pack(fill="x", pady=(0, 15))
 
-                    # Persist new figures if available
-                    for figure_path in followup_state.get("figure_paths", []):
-                        st.session_state.figure_paths_history.append(figure_path)
+        self.theme_var = tk.StringVar(value=self.config.get("theme", "dark"))
 
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Error during follow-up: {e}")
+        for theme in ["Dark", "Light"]:
+            tk.Radiobutton(theme_frame, text=theme, variable=self.theme_var,
+                          value=theme.lower(), bg=BG_INPUT, fg=FG_TEXT,
+                          selectcolor=BG_INPUT).pack(side="left", padx=10, pady=8)
 
-    # --- Custom Follow-up ---
-    st.markdown("### ✏️ Or ask your own follow-up question:")
-    custom_followup = st.text_input("Custom follow-up query", key="custom_followup")
+        # LLM Backend Section
+        tk.Label(main_frame, text="LLM Backend", bg=BG_MAIN, fg=FG_TEXT,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 8))
 
-    if st.button("📌 Submit Follow-up Query", key="submit_custom_followup") and custom_followup.strip():
-        with st.spinner("Processing custom follow-up..."):
-            try:
-                followup_state = handle_followup(custom_followup.strip(), st.session_state.state)
-                st.session_state.state = followup_state
-                st.session_state.history.append(followup_state)
-                st.session_state.followup_counter += 1
+        llm_frame = tk.Frame(main_frame, bg=BG_INPUT, relief="flat")
+        llm_frame.pack(fill="x", pady=(0, 15))
 
-                # Persist new figures if available
-                for figure_path in followup_state.get("figure_paths", []):
-                    st.session_state.figure_paths_history.append(figure_path)
+        self.llm_var = tk.StringVar(value=self.config.get("llm_backend", "groq"))
 
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Error during follow-up: {e}")
-    
-    st.sidebar.subheader("Manage DataFrames")
-    # Temp storage for file and metadata
-    if "pending_sidebar_upload" not in st.session_state:
-        st.session_state.pending_sidebar_upload = {}
+        for llm in ["Groq", "Ollama", "OpenAI"]:
+            tk.Radiobutton(llm_frame, text=llm, variable=self.llm_var,
+                          value=llm.lower(), bg=BG_INPUT, fg=FG_TEXT,
+                          selectcolor=BG_INPUT).pack(side="left", padx=10, pady=8)
 
-    uploaded_files_sidebar = st.sidebar.file_uploader(
-        "Upload CSV/XLSX files", type=["csv", "xlsx", "xls"],
-        accept_multiple_files=False, key="sidebar_uploader"
-    )
+        # API Key Section
+        tk.Label(main_frame, text="API Configuration", bg=BG_MAIN, fg=FG_TEXT,
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 8))
 
-    # When a file is uploaded, store in pending state
-    if uploaded_files_sidebar:
-        file = uploaded_files_sidebar
-        ext = file.name.split(".")[-1].lower()
+        api_frame = tk.Frame(main_frame, bg=BG_MAIN)
+        api_frame.pack(fill="x", pady=(0, 15))
+
+        tk.Label(api_frame, text="Groq API Key:", bg=BG_MAIN, fg=FG_TEXT).pack(anchor="w", pady=(0, 4))
+        self.groq_entry = tk.Entry(api_frame, bg=BG_INPUT, fg=FG_TEXT, insertbackground="white")
+        self.groq_entry.pack(fill="x", pady=(0, 10))
+        self.groq_entry.insert(0, self.config.get("groq_api_key", ""))
+
+        tk.Label(api_frame, text="OpenAI API Key:", bg=BG_MAIN, fg=FG_TEXT).pack(anchor="w", pady=(0, 4))
+        self.openai_entry = tk.Entry(api_frame, bg=BG_INPUT, fg=FG_TEXT, insertbackground="white")
+        self.openai_entry.pack(fill="x", pady=(0, 10))
+        self.openai_entry.insert(0, self.config.get("openai_api_key", ""))
+
+        tk.Label(api_frame, text="Ollama Model:", bg=BG_MAIN, fg=FG_TEXT).pack(anchor="w", pady=(0, 4))
+        self.ollama_entry = tk.Entry(api_frame, bg=BG_INPUT, fg=FG_TEXT, insertbackground="white")
+        self.ollama_entry.pack(fill="x")
+        self.ollama_entry.insert(0, self.config.get("ollama_model", "llama3.1:8b"))
+
+        # Buttons
+        button_frame = tk.Frame(main_frame, bg=BG_MAIN)
+        button_frame.pack(fill="x", pady=(10, 0))
+
+        tk.Button(button_frame, text="Save", bg=ACCENT, fg="white", relief="flat",
+                 command=self.save_settings).pack(side="right", padx=(5, 0))
+        tk.Button(button_frame, text="Cancel", bg="#555555", fg="white", relief="flat",
+                 command=self.dialog.destroy).pack(side="right", padx=5)
+
+    def save_settings(self):
+        """Save the settings and call the callback"""
+        new_config = {
+            "theme": self.theme_var.get(),
+            "llm_backend": self.llm_var.get(),
+            "groq_api_key": self.groq_entry.get().strip(),
+            "openai_api_key": self.openai_entry.get().strip(),
+            "ollama_model": self.ollama_entry.get().strip()
+        }
+
         try:
-            if ext == "csv":
-                df = pd.read_csv(file)
-            else:
-                df = pd.read_excel(file)
+            save_config(new_config)
+            self.on_settings_change(new_config)
+            self.dialog.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save settings: {str(e)}\n\nMake sure you have the required package installed for the selected LLM backend.")
 
-            st.session_state.pending_sidebar_upload = {
-                "file": file,
-                "data": df
-            }
+
+class DataAnalystApp:
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("AI Data Analyst")
+        self.root.geometry("1400x850")
+
+        # Load configuration
+        self.config = load_config()
+        self.apply_theme(self.config.get("theme", "dark"))
+        self.root.configure(bg=self.bg_main)
+
+        self.dfs = []
+        self.state = None
+
+        self.mode = tk.StringVar(value="chat")
+        self.bottom_tab = tk.StringVar(value="summary")
+        self.transform_mode = tk.StringVar(value="Python Mode")
+
+        self.build_layout()
+
+        self.root.bind_all("<MouseWheel>", self._global_mousewheel, add=True)
+        self.root.bind_all("<Button-4>", self._global_mousewheel, add=True)
+        self.root.bind_all("<Button-5>", self._global_mousewheel, add=True)
+
+    def apply_theme(self, theme_name):
+        """Apply theme colors to the app"""
+        theme = THEMES.get(theme_name, THEMES["dark"])
+        self.bg_main = theme["BG_MAIN"]
+        self.bg_panel = theme["BG_PANEL"]
+        self.bg_input = theme["BG_INPUT"]
+        self.fg_text = theme["FG_TEXT"]
+        self.accent = theme["ACCENT"]
+
+    def on_settings_changed(self, new_config):
+        """Handle settings change"""
+        self.config = new_config
+        theme_changed = self.config.get("theme", "dark")
+
+        # Apply theme
+        self.apply_theme(theme_changed)
+
+        # Update LLM if backend changed
+        llm_backend = self.config.get("llm_backend", "groq")
+        groq_key = self.config.get("groq_api_key", "")
+        openai_key = self.config.get("openai_api_key", "")
+        ollama_model = self.config.get("ollama_model", "llama3.1:8b")
+
+        # Update the global llm object in ai_core module
+        import ai_core
+        ai_core.llm = get_llm(llm_backend, groq_key, openai_key, ollama_model)
+
+        messagebox.showinfo("Settings", "Settings updated successfully!\nPlease restart the app for full theme changes to apply.")
+
+    def open_settings(self):
+        """Open the settings dialog"""
+        SettingsDialog(self.root, self.config, self.on_settings_changed)
+
+    # ---------------- LAYOUT ----------------
+
+    def build_layout(self):
+
+        top_bar = tk.Frame(self.root, bg=BG_PANEL, height=35)
+        top_bar.pack(fill="x")
+
+        self._mode_button(top_bar, "Chat Mode", "chat")
+        self._mode_button(top_bar, "Data & Transformations", "data")
+
+        self.main_vertical = tk.PanedWindow(self.root, orient="vertical", sashwidth=6)
+        self.main_vertical.pack(fill="both", expand=True)
+
+        self.main_horizontal = tk.PanedWindow(self.main_vertical, orient="horizontal", sashwidth=6)
+        self.main_vertical.add(self.main_horizontal)
+
+        self.sidebar = tk.Frame(self.main_horizontal, bg=BG_PANEL)
+        self.main_horizontal.add(self.sidebar)
+
+        tk.Label(self.sidebar, text="📦 IN CONTEXT", bg=BG_PANEL,
+                 fg=FG_TEXT, font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=8, pady=8)
+
+        self.ledger_list = tk.Listbox(
+            self.sidebar,
+            bg=BG_PANEL,
+            fg=FG_TEXT,
+            selectbackground=ACCENT,
+            relief="flat",
+            font=FONT_UI,
+            height=12
+        )
+        self.ledger_list.pack(fill="both", expand=True, padx=8)
+
+        ttk.Button(self.sidebar, text="Upload Files", command=self.upload_files)\
+            .pack(fill="x", padx=8, pady=6)
+
+        ttk.Button(self.sidebar, text="Remove Selected", command=self.remove_selected_df)\
+            .pack(fill="x", padx=8, pady=4)
+
+        self.canvas_container = tk.Frame(self.main_horizontal, bg=BG_MAIN)
+        self.main_horizontal.add(self.canvas_container)
+
+        self.build_chat_view()
+        self.build_data_view()
+
+        self.bottom_panel = tk.Frame(self.main_vertical, bg=BG_PANEL, height=220)
+        self.main_vertical.add(self.bottom_panel)
+
+        tab_bar = tk.Frame(self.bottom_panel, bg=BG_PANEL)
+        tab_bar.pack(fill="x")
+
+        # Left side tabs
+        left_tabs = tk.Frame(tab_bar, bg=BG_PANEL)
+        left_tabs.pack(side="left")
+
+        self._bottom_tab(left_tabs, "Summary", "summary")
+        self._bottom_tab(left_tabs, "Generated Code", "code")
+
+        # Right side - Settings button
+        right_buttons = tk.Frame(tab_bar, bg=BG_PANEL)
+        right_buttons.pack(side="right", padx=8)
+
+        tk.Button(right_buttons, text="⚙ Settings", bg=ACCENT, fg="white", relief="flat",
+                 command=self.open_settings).pack(side="right")
+
+        self.bottom_text = tk.Text(self.bottom_panel, bg="#1b1b1b",
+                                   fg=FG_TEXT, relief="flat", font=FONT_CODE)
+        self.bottom_text.pack(fill="both", expand=True)
+
+        self.root.update_idletasks()
+        self.main_horizontal.sash_place(0, 220, 0)
+        self.main_vertical.sash_place(0, 0, 450)
+
+        self.switch_mode()
+
+    # ---------------- CHAT VIEW ----------------
+
+    def build_chat_view(self):
+
+        self.chat_frame = tk.Frame(self.canvas_container, bg=BG_MAIN)
+
+        query_bar = tk.Frame(self.chat_frame, bg=BG_MAIN)
+        query_bar.pack(fill="x", padx=10, pady=10)
+
+        self.query_entry = tk.Entry(query_bar, bg=BG_INPUT, fg=FG_TEXT,
+                                    insertbackground="white")
+        self.query_entry.pack(side="left", fill="x", expand=True, ipady=6)
+
+        tk.Button(query_bar, text="Run", bg=ACCENT, fg="white",
+                  relief="flat", command=self.run_analysis).pack(side="left", padx=6)
+
+        container = tk.Frame(self.chat_frame, bg=BG_MAIN)
+        container.pack(fill="both", expand=True)
+
+        self.chat_canvas = tk.Canvas(container, bg=BG_MAIN, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical",
+                                  command=self.chat_canvas.yview)
+
+        self.chat_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.chat_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.chat_inner = tk.Frame(self.chat_canvas, bg=BG_MAIN)
+        self.chat_canvas.create_window((0, 0), window=self.chat_inner, anchor="nw")
+
+        self.chat_inner.bind("<Configure>", lambda e:
+            self.chat_canvas.configure(scrollregion=self.chat_canvas.bbox("all"))
+        )
+
+    # ---------------- DATA VIEW ----------------
+
+    def build_data_view(self):
+
+        self.data_frame = tk.Frame(self.canvas_container, bg=BG_MAIN)
+
+        top = tk.Frame(self.data_frame, bg=BG_MAIN)
+        top.pack(fill="x", padx=10, pady=10)
+
+        tk.Label(top, text="DataFrame:", bg=BG_MAIN, fg=FG_TEXT).pack(side="left")
+
+        self.df_selector = ttk.Combobox(top, state="readonly", width=30)
+        self.df_selector.pack(side="left", padx=5)
+
+        ttk.Button(top, text="Preview", command=self.preview_df).pack(side="left")
+
+        self.preview_box = tk.Text(self.data_frame, bg="#1b1b1b",
+                                   fg=FG_TEXT, font=FONT_CODE, height=14)
+        self.preview_box.pack(fill="both", expand=True, padx=10)
+
+        mode_bar = tk.Frame(self.data_frame, bg=BG_MAIN)
+        mode_bar.pack(fill="x", padx=10)
+
+        ttk.Radiobutton(mode_bar, text="Python Mode",
+                        variable=self.transform_mode, value="Python Mode").pack(side="left")
+
+        ttk.Radiobutton(mode_bar, text="LLM Mode",
+                        variable=self.transform_mode, value="LLM Mode").pack(side="left", padx=10)
+
+        self.transform_box = tk.Text(self.data_frame, bg=BG_INPUT,
+                                     fg=FG_TEXT, font=FONT_CODE, height=6)
+        self.transform_box.pack(fill="x", padx=10, pady=5)
+
+        tk.Button(self.data_frame, text="Apply Data Transformation",
+                  bg=ACCENT, fg="white", relief="flat",
+                  command=self.apply_transformation)\
+            .pack(anchor="e", padx=10, pady=5)
+
+    # ---------------- ANALYSIS ----------------
+
+    def run_analysis(self):
+
+        query = self.query_entry.get().strip()
+        if not query or not self.dfs:
+            messagebox.showwarning("Missing Input", "Upload data & enter query")
+            return
+
+        self._chat("USER", query)
+
+        state = {"dfs": self.dfs, "user_query": query}
+        self.state = graph.invoke(state)
+
+        self._chat("AI", self.state.get("execution_output", ""))
+        self.update_bottom_panel()
+        self.update_ledger()
+        self.render_figures_inline()
+
+    # ---------------- REMOVE DF ----------------
+
+    def remove_selected_df(self):
+
+        selection = self.ledger_list.curselection()
+
+        if not selection:
+            messagebox.showwarning("No Selection", "Select a DataFrame to remove")
+            return
+
+        df_name = self.ledger_list.get(selection[0])
+
+        self.dfs = [d for d in self.dfs if d["name"] != df_name]
+
+        if self.state and "context_ledger" in self.state:
+            self.state["context_ledger"].pop(df_name, None)
+
+        self.update_ledger()
+        self.preview_box.delete("1.0", "end")
+
+        messagebox.showinfo("Removed", f"{df_name} removed from context")
+
+    # ---------------- TRANSFORM ----------------
+
+    def apply_transformation(self):
+
+        name = self.df_selector.get()
+        instruction = self.transform_box.get("1.0", "end").strip()
+
+        if not name or not instruction:
+            messagebox.showwarning("Missing Input", "Select DF & enter transformation")
+            return
+
+        target = next((d for d in self.dfs if d["name"] == name), None)
+
+        try:
+            if self.transform_mode.get() == "LLM Mode":
+
+                prompt = f"""
+Return ONLY valid Python code.
+
+Modify pandas DataFrame '{name}' according to:
+
+{instruction}
+
+Rules:
+- No explanations
+- No markdown
+- Only Python code
+"""
+
+                code = llm.invoke(prompt).strip()
+                if "```" in code:
+                    code = code.replace("```python", "").replace("```", "").strip()
+
+            else:
+                code = instruction
+
+            local_vars = {name: target["data"]}
+            exec(code, {}, local_vars)
+
+            target["data"] = local_vars[name]
+
+            self.preview_df()
+
+            messagebox.showinfo("Success", f"{name} updated")
 
         except Exception as e:
-            st.sidebar.error(f"❌ Failed to read {file.name}: {e}")
-            st.session_state.pending_sidebar_upload = {}
+            messagebox.showerror("Transformation Error", str(e))
 
-    # If a file is pending, ask for metadata and confirm
-    if st.session_state.get("pending_sidebar_upload"):
-        file = st.session_state.pending_sidebar_upload["file"]
-        df = st.session_state.pending_sidebar_upload["data"]
+    # ---------------- UI HELPERS ----------------
 
-        new_df_name = st.sidebar.text_input("📛 DataFrame Name", value=file.name.split(".")[0])
-        description = st.sidebar.text_input("📝 Description", f"User uploaded file: {file.name}")
+    def _chat(self, sender, text):
+        block = tk.Frame(self.chat_inner, bg=BG_MAIN)
+        block.pack(fill="x", padx=8, pady=4)
 
-        if st.sidebar.button("✅ Confirm Upload"):
-            # Prevent duplicate DataFrame names
-            if new_df_name in [x['name'] for x in st.session_state.dfs]:
-                st.sidebar.warning("⚠️ DataFrame name already exists!")
-            else:
-                st.session_state.dfs.append({
-                    "name": new_df_name,
-                    "data": df,
-                    "description": description
-                })
+        tk.Label(block, text=sender, fg=ACCENT if sender == "AI" else FG_TEXT,
+                 bg=BG_MAIN).pack(anchor="w")
 
-                # Also update the context ledger if available
-                if st.session_state.state:
-                    st.session_state.state.setdefault("context_ledger", {})[new_df_name] = {
-                        "description": description,
-                        "summary": data_description(df)
-                    }
+        tk.Label(block, text=text, fg=FG_TEXT,
+                 bg=BG_MAIN, wraplength=900, justify="left").pack(anchor="w")
 
-                st.sidebar.success(f"✅ Loaded: {file.name} as {new_df_name}")
-                st.session_state.pending_sidebar_upload = {}  # Clear pending state
-                st.rerun()
+        self.chat_canvas.update_idletasks()
+        self.chat_canvas.yview_moveto(1.0)
+
+    def render_figures_inline(self):
+        if not self.state:
+            return
+        for path in self.state.get("figure_paths", []):
+            if os.path.exists(path):
+                fig = plt.figure()
+                img = plt.imread(path)
+                plt.imshow(img)
+                plt.axis("off")
+                canvas = FigureCanvasTkAgg(fig, master=self.chat_inner)
+                canvas.draw()
+                canvas.get_tk_widget().pack(anchor="w")
+
+    def update_ledger(self):
+        self.ledger_list.delete(0, "end")
+        if not self.state:
+            return
+        for k in self.state.get("context_ledger", {}):
+            self.ledger_list.insert("end", k)
+        self.df_selector["values"] = [d["name"] for d in self.dfs]
+
+    def preview_df(self):
+        name = self.df_selector.get()
+        df = next((d["data"] for d in self.dfs if d["name"] == name), None)
+        if df is not None:
+            self.preview_box.delete("1.0", "end")
+            self.preview_box.insert("end", df.head(25).to_string())
+
+    def upload_files(self):
+        for path in filedialog.askopenfilenames(filetypes=[("Data Files", "*.csv *.xlsx *.xls")]):
+            df = pd.read_csv(path) if path.endswith(".csv") else pd.read_excel(path)
+            self.dfs.append({"name": os.path.splitext(os.path.basename(path))[0],
+                             "data": df,
+                             "description": path})
+        self.df_selector["values"] = [d["name"] for d in self.dfs]
+
+    def update_bottom_panel(self):
+        self.bottom_text.delete("1.0", "end")
+        if not self.state:
+            return
+        key = "analysis" if self.bottom_tab.get() == "summary" else "generated_code"
+        self.bottom_text.insert("end", self.state.get(key, ""))
+
+    def _bottom_tab(self, parent, label, value):
+        tk.Radiobutton(parent, text=label, variable=self.bottom_tab, value=value,
+                       indicatoron=0, bg=BG_PANEL, fg=FG_TEXT,
+                       selectcolor="#333333", relief="flat",
+                       command=self.update_bottom_panel).pack(side="left")
+
+    def _mode_button(self, parent, label, value):
+        tk.Radiobutton(parent, text=label, variable=self.mode, value=value,
+                       indicatoron=0, bg=BG_PANEL, fg=FG_TEXT,
+                       selectcolor="#333333", relief="flat",
+                       command=self.switch_mode).pack(side="left")
+
+    def switch_mode(self):
+        for w in (self.chat_frame, self.data_frame):
+            w.pack_forget()
+        (self.chat_frame if self.mode.get() == "chat" else self.data_frame)\
+            .pack(fill="both", expand=True)
+
+    def _global_mousewheel(self, event):
+        widget = event.widget
+        while widget:
+            if widget == self.chat_canvas:
+                self.chat_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                return
+            widget = widget.master
 
 
-    # Remove DataFrame
-    remove_df_name = st.sidebar.selectbox("Remove DataFrame", [x['name'] for x in st.session_state.dfs])
-    if st.sidebar.button("Remove"):
-
-        for item in st.session_state.dfs:
-            if item["name"] == remove_df_name:
-                st.session_state.dfs.remove(item)
-                break
-
-        if remove_df_name in ledger:
-            del ledger[remove_df_name]
-
-        st.rerun()
-        st.sidebar.warning(f"'{remove_df_name}' removed.")
-
-    st.subheader("🔍 Preview a DataFrame")
-
-    if st.session_state.dfs:
-        df_names = [df["name"] for df in st.session_state.dfs]
-        selected_df_name = st.selectbox("Select a DataFrame to preview", df_names)
-
-        num_rows = st.number_input("Number of rows to show", min_value=1, max_value=1000, value=10, step=1)
-
-        # Get the actual DataFrame
-        selected_df_data = next((df["data"] for df in st.session_state.dfs if df["name"] == selected_df_name), None)
-
-        if selected_df_data is not None:
-            st.dataframe(selected_df_data.head(num_rows), use_container_width=True)
-        else:
-            st.warning("⚠️ Could not find the selected DataFrame.")
-    else:
-        st.info("Upload a file to start previewing data.")
-
-
-
-    # --- DataFrame Manipulation ---
-    st.subheader("✍️ Manipulate DataFrames")
-
-    if st.session_state.state and "context_ledger" in st.session_state.state:
-        df_names = list(st.session_state.state["context_ledger"].keys())
-        
-        selected_df_name = st.selectbox("📊 Select a DataFrame to manipulate", df_names)
-        mode = st.radio("Choose manipulation mode", ["Python Mode", "LLM Mode"], horizontal=True)
-
-        if selected_df_name:
-            # Find the actual DataFrame object
-            target_df_obj = next((x for x in st.session_state.dfs if x["name"] == selected_df_name), None)
-
-            if target_df_obj:
-                if mode == "Python Mode":
-                    code = st.text_area("✍️ Write Python code to manipulate the DataFrame", height=150,
-                                        placeholder=f"Example: {selected_df_name} = {selected_df_name}[{selected_df_name}[\"spend_amount\"] >= 500]")
-
-                    if st.button("▶️ Execute Python Code"):
-                        try:
-                            local_vars = {selected_df_name: target_df_obj["data"]}
-                            exec(code, {}, local_vars)
-                            modified_df = local_vars[selected_df_name]
-
-                            # Update DataFrame
-                            target_df_obj["data"] = modified_df
-
-                            # Update context ledger summary
-                            st.session_state.state["context_ledger"][selected_df_name]["summary"] = data_description(modified_df)
-
-                            st.success("✅ DataFrame updated successfully.")
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"❌ Error executing code: {e}")
-
-                elif mode == "LLM Mode":
-                    llm_instruction = st.text_input("🧠 Describe what you want to do",
-                                                    placeholder="Example: Keep only spend amount greater than 500")
-
-                    if st.button("✨ Generate and Execute Code"):
-                        try:
-                            from ai_core import textgen_agent  # Assuming you already have this function
-                            
-                            # Generate code
-                            prompt = f"Write Python code to modify a pandas DataFrame named '{selected_df_name}' as per the instruction: {llm_instruction}"
-                            generated_code = textgen_agent(prompt)
-
-                            st.code(generated_code.strip(), language="python")
-
-                            local_vars = {selected_df_name: target_df_obj["data"]}
-                            exec(generated_code, {}, local_vars)
-                            modified_df = local_vars[selected_df_name]
-
-                            # Update DataFrame
-                            target_df_obj["data"] = modified_df
-
-                            # Update context ledger summary
-                            st.session_state.state["context_ledger"][selected_df_name]["summary"] = data_description(modified_df)
-
-                            st.success("✅ LLM-generated code executed successfully.")
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"❌ Error in LLM Mode: {e}")
-
-    st.markdown("### 🔄 Re-run Last Generated Code on Updated Data")
-
-    if st.button("🔁 Rerun Code on Latest Data"):
-        with st.spinner("Re-running code on current data..."):
-            try:
-                code = st.session_state.state.get("generated_code", "")
-                if not code:
-                    st.warning("No code available to re-run.")
-                else:
-                    # Prepare context for repl
-                    repl_context = {
-                        df["name"]: df["data"] for df in st.session_state.dfs
-                    }
-
-                    result = custom_repl(code, repl_context)
-
-                    # Update state
-                    st.session_state.state["execution_output"] = result["stdout"]
-                    st.session_state.state["figure_paths"] =  result.get("figure_paths", ["Dummy.png"])
-                    #st.session_state.state["figure_paths_history"].extend(result.get("figure_paths", ["Dummy.png"]))
-
-                    # Rerender
-                    st.success("Code re-executed with latest data.")
-                    st.rerun()
-
-            except Exception as e:
-                st.error(f"❌ Error while re-running: {e}")
+if __name__ == "__main__":
+    root = tk.Tk()
+    DataAnalystApp(root)
+    root.mainloop()
