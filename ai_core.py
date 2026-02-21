@@ -1,15 +1,47 @@
-# LLM SETUP
+# AI Core Module for Data Analysis
+# LLM backend and REPL execution
 
 import os
+import sys
+import io
+import json
+import ast
+import builtins
+import contextlib
+import importlib
+import matplotlib.pyplot as plt
+import re
+import uuid
+import pandas as pd
+from langgraph.graph import StateGraph
+from langchain.llms import Ollama
+from langchain_core.tools import Tool
+from langchain_core.runnables import RunnableLambda
 
-# Initialize LLM with configuration
+
+# ============================================================================
+# LLM Configuration and Initialization
+# ============================================================================
+
+def _load_config():
+    """Load configuration from config.json"""
+    config_path = "config.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
 def get_llm(llm_backend="groq", groq_api_key="", openai_api_key="", ollama_model="llama3.1:8b"):
     """Get LLM instance based on backend selection"""
     if llm_backend == "groq":
         from groq import Groq
 
         class GroqLLM:
-            def __init__(self, model="llama-3-70b", api_key=""):
+            def __init__(self, model=None, api_key=None):
                 self.client = Groq(api_key=api_key or os.getenv("GROQ_API_KEY"))
                 self.model = model
 
@@ -31,7 +63,7 @@ def get_llm(llm_backend="groq", groq_api_key="", openai_api_key="", ollama_model
             from openai import OpenAI
 
             class OpenAILLM:
-                def __init__(self, api_key=""):
+                def __init__(self, api_key=None):
                     self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
                     self.model = "gpt-3.5-turbo"
 
@@ -45,46 +77,24 @@ def get_llm(llm_backend="groq", groq_api_key="", openai_api_key="", ollama_model
             return OpenAILLM(api_key=openai_api_key)
 
     else:  # ollama
-        from langchain.llms import Ollama
         return Ollama(model=ollama_model, temperature=0.5)
 
-# Load default LLM
-LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
 
-# Initialize default LLM
-if LLM_BACKEND == "groq":
-    from groq import Groq
+# Load configuration and initialize LLM
+_config = _load_config()
+_llm_backend = _config.get("llm_backend", "groq")
+_groq_api_key = _config.get("groq_api_key", "")
+_openai_api_key = _config.get("openai_api_key", "")
+_ollama_model = _config.get("ollama_model", "llama3.1:8b")
 
-    class GroqLLM:
-        def __init__(self, model="llama-3-70b", api_key="gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"):
-            self.client = Groq(api_key=api_key or os.getenv("GROQ_API_KEY"))
-            self.model = model
+llm = get_llm(_llm_backend, _groq_api_key, _openai_api_key, _ollama_model)
 
-        def invoke(self, prompt):
-            completion = self.client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model=self.model,
-            )
-            return completion.choices[0].message.content
 
-    llm = GroqLLM(model="llama-3.3-70b-versatile")
-else:
-    from langchain.llms import Ollama
-    llm = Ollama(model="llama3.1:8b", temperature=0.5)
+# ============================================================================
+# REPL Environment
+# ============================================================================
 
-# MY REPL!!
-
-import sys
-import io
-import ast
-import builtins
-import contextlib
-import importlib
-import matplotlib.pyplot as plt
-import re
-import uuid
-
-# Persistent environment
+# Persistent environment for code execution
 REPL_GLOBALS = {
     "__builtins__": {
         "abs": abs,
@@ -182,6 +192,11 @@ COMMON_MODULES = {
     "sp": "scipy",
 }
 
+
+# ============================================================================
+# REPL Helper Functions
+# ============================================================================
+
 def detect_missing_imports(user_code):
     """Detect symbols used that may require auto-importing."""
     tree = ast.parse(user_code)
@@ -215,17 +230,8 @@ def fix_main_execution(user_code):
 
     return modified_code, None
 
-import os
-import matplotlib.pyplot as plt
-
 
 def custom_repl(user_code: str, context_vars: dict = None, return_globals: bool = False):
-    import io
-    import contextlib
-    import uuid
-    import matplotlib.pyplot as plt
-    import os
-
     stdout = io.StringIO()
     stderr = io.StringIO()
 
@@ -281,17 +287,17 @@ def custom_repl(user_code: str, context_vars: dict = None, return_globals: bool 
         "figure_paths": figure_paths
     }
 
-import pandas as pd
-from langgraph.graph import StateGraph
-from langchain.llms import Ollama
-from langchain_core.tools import Tool
-from langchain_core.runnables import RunnableLambda
+
+# ============================================================================
+# Tools and Utilities
+# ============================================================================
 
 repl_tool = Tool(
     name="custom_repl",
     description="A dynamic Python shell that automatically handles imports and executes code.",
     func=custom_repl
 )
+
 
 def data_description(df, name="df"):
     column_info = []
@@ -310,7 +316,12 @@ def data_description(df, name="df"):
 
     return summary
 
-# 🔍 Step 1: Analyze dataframes and user query
+
+# ============================================================================
+# Data Analysis Workflow (LangGraph)
+# ============================================================================
+
+# Step 1: Analyze dataframes and user query
 def analyze_data(state):
     dfs = state.get("dfs", [])
     user_query = state.get("user_query", "")
@@ -346,9 +357,8 @@ def analyze_data(state):
         "user_query": user_query
     }
 
-# Step 2: Generate Python code
-import re
 
+# Step 2: Generate Python code
 def generate_code(state):
 
     analysis = state.get("analysis", "")
@@ -502,7 +512,10 @@ def handle_followup(followup_query, previous_state):
     return final_state
 
 
-# LangGraph Workflow Definition
+# ============================================================================
+# LangGraph Workflow Compilation
+# ============================================================================
+
 workflow = StateGraph(dict)
 workflow.add_node("analyze_data", RunnableLambda(analyze_data))
 workflow.add_node("generate_code", RunnableLambda(generate_code))

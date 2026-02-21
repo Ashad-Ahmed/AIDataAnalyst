@@ -54,11 +54,11 @@ def load_config():
 def get_default_config():
     """Return default configuration"""
     return {
-        "theme": "dark",
-        "llm_backend": "groq",
-        "groq_api_key": "gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "theme": "",
+        "llm_backend": "",
+        "groq_api_key": "",
         "openai_api_key": "",
-        "ollama_model": "llama3.1:8b"
+        "ollama_model": ""
     }
 
 def save_config(config):
@@ -179,10 +179,12 @@ class DataAnalystApp:
         self.root.title("AI Data Analyst")
         self.root.geometry("1400x850")
 
-        # Load configuration
+        # Load configuration from config.json
         self.config = load_config()
         self.apply_theme(self.config.get("theme", "dark"))
         self.root.configure(bg=self.bg_main)
+
+        # Note: ai_core.py initializes LLM from config.json automatically
 
         self.dfs = []
         self.state = None
