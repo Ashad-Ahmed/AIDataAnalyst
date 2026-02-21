@@ -2,15 +2,61 @@
 
 import os
 
-# Choose LLM Backend: 'ollama' or 'groq'
-LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")  # Change this environment variable as needed
+# Initialize LLM with configuration
+def get_llm(llm_backend="groq", groq_api_key="", openai_api_key="", ollama_model="llama3.1:8b"):
+    """Get LLM instance based on backend selection"""
+    if llm_backend == "groq":
+        from groq import Groq
 
-# Initialize LLM
+        class GroqLLM:
+            def __init__(self, model="llama-3-70b", api_key=""):
+                self.client = Groq(api_key=api_key or os.getenv("GROQ_API_KEY"))
+                self.model = model
+
+            def invoke(self, prompt):
+                completion = self.client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=self.model,
+                )
+                return completion.choices[0].message.content
+
+        return GroqLLM(model="llama-3.3-70b-versatile", api_key=groq_api_key)
+
+    elif llm_backend == "openai":
+        try:
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(api_key=openai_api_key or os.getenv("OPENAI_API_KEY"))
+        except ImportError:
+            # Fallback to standard OpenAI library
+            from openai import OpenAI
+
+            class OpenAILLM:
+                def __init__(self, api_key=""):
+                    self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+                    self.model = "gpt-3.5-turbo"
+
+                def invoke(self, prompt):
+                    response = self.client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model=self.model,
+                    )
+                    return response.choices[0].message.content
+
+            return OpenAILLM(api_key=openai_api_key)
+
+    else:  # ollama
+        from langchain.llms import Ollama
+        return Ollama(model=ollama_model, temperature=0.5)
+
+# Load default LLM
+LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
+
+# Initialize default LLM
 if LLM_BACKEND == "groq":
     from groq import Groq
 
     class GroqLLM:
-        def __init__(self, model="llama-3-70b", api_key="gsk_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"):
+        def __init__(self, model="llama-3-70b", api_key="gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"):
             self.client = Groq(api_key=api_key or os.getenv("GROQ_API_KEY"))
             self.model = model
 
@@ -23,6 +69,7 @@ if LLM_BACKEND == "groq":
 
     llm = GroqLLM(model="llama-3.3-70b-versatile")
 else:
+    from langchain.llms import Ollama
     llm = Ollama(model="llama3.1:8b", temperature=0.5)
 
 # MY REPL!!
@@ -171,11 +218,13 @@ def fix_main_execution(user_code):
 import os
 import matplotlib.pyplot as plt
 
-# Modify custom_repl function to save plots
+
 def custom_repl(user_code: str, context_vars: dict = None, return_globals: bool = False):
     import io
     import contextlib
     import uuid
+    import matplotlib.pyplot as plt
+    import os
 
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -189,31 +238,32 @@ def custom_repl(user_code: str, context_vars: dict = None, return_globals: bool 
     if main_log:
         import_logs.append(main_log)
 
-    # Step 3: Use a shared REPL global environment
+    # Step 3: Use shared REPL globals
     global REPL_GLOBALS
     if context_vars:
         REPL_GLOBALS.update(context_vars)
 
-    # Step 4: Execute the code
+    # Step 4: Execute code
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         try:
+            plt.close('all')
             exec(user_code, REPL_GLOBALS)
         except Exception as e:
-            print(f"⚠️ Execution Error: {e}")
+            print(f"Execution Error: {e}")
 
-    # Step 5: Capture outputs and visualizations
+    # Step 5: Capture outputs
     out = stdout.getvalue() + stderr.getvalue()
     logs = "\n".join(filter(None, import_logs))
     result_value = REPL_GLOBALS.get("agent_result", None)
 
-    # Collect all active matplotlib figures
+    # Step 6: Collect newly created figures ONLY
     figures = [plt.figure(i) for i in plt.get_fignums()]
 
-    # Save all the figures with unique names
     figure_paths = []
+
     for fig in figures:
-        fig_name = f"figure_{str(uuid.uuid4())}.png"
-        fig_path = os.path.join(os.getcwd(), fig_name)  # Save in the current directory
+        fig_name = f"figure_{uuid.uuid4()}.png"
+        fig_path = os.path.join(os.getcwd(), fig_name)
         fig.savefig(fig_path, format="png", bbox_inches="tight")
         figure_paths.append(fig_path)
 
@@ -222,13 +272,13 @@ def custom_repl(user_code: str, context_vars: dict = None, return_globals: bool 
             "stdout": f"{logs}\n{out}" if logs else out,
             "agent_result": result_value,
             "globals": REPL_GLOBALS.copy(),
-            "figure_paths": figure_paths  # Save the paths
+            "figure_paths": figure_paths
         }
 
     return {
         "stdout": f"{logs}\n{out}" if logs else out,
         "agent_result": result_value,
-        "figure_paths": figure_paths  # Save the paths
+        "figure_paths": figure_paths
     }
 
 import pandas as pd
@@ -281,13 +331,13 @@ def analyze_data(state):
                 "summary": summary
             })
     except Exception as e:
-        return {"analysis": f"⚠️ Execution Error: {str(e)}", "dfs": dfs, "user_query": user_query}
+        return {"analysis": f"Execution Error: {str(e)}", "dfs": dfs, "user_query": user_query}
 
     prompt = "You are analyzing **multiple datasets**. Each dataset has a description and a summarized view. Use these to understand the context and help generate insights or code.\n\n"
     for item in all_summaries:
-        prompt += f"📄 Dataset: {item['name']}\n📝 Description: {item['description']}\n📊 Summary: {item['summary']}\n\n"
+        prompt += f"Dataset: {item['name']}\n Description: {item['description']}\n Summary: {item['summary']}\n\n"
 
-    prompt += f"💬 User Request:\n{user_query}"
+    prompt += f"User Request:\n{user_query}"
 
     response = llm.invoke(prompt)
     return {
@@ -296,7 +346,7 @@ def analyze_data(state):
         "user_query": user_query
     }
 
-# 🧠 Step 2: Generate Python code
+# Step 2: Generate Python code
 import re
 
 def generate_code(state):
@@ -330,10 +380,10 @@ def generate_code(state):
 
     Begin by analyzing the following datasets and user request:
 
-    📊 Dataset Analysis:
+    Dataset Analysis:
     {analysis}
 
-    💬 User Request:
+    User Request:
     {user_query}
     """
 
@@ -358,7 +408,7 @@ def generate_code(state):
     }
 
 
-# 🧪 Step 3: Execute code with REPL
+# Step 3: Execute code with REPL
 def execute_code(state):
 
     code = state.get("generated_code", "").strip()
@@ -366,7 +416,7 @@ def execute_code(state):
     ledger = state.get("context_ledger", {})
     user_query = state.get("user_query")
 
-    print("\n📝 Generated Python Code:\n")
+    print("\n Generated Python Code:\n")
 
     # Inject existing DataFrames
     context_vars = {entry["name"]: entry["data"] for entry in dfs}
@@ -387,7 +437,7 @@ def execute_code(state):
                     "summary": summary
                 }
             except Exception as e:
-                print(f"⚠️ Error summarizing injected DataFrame '{name}': {e}")
+                print(f"Error summarizing injected DataFrame '{name}': {e}")
 
 
     # Execute the code in REPL
@@ -403,7 +453,7 @@ def execute_code(state):
 
         if (
             isinstance(val, pd.DataFrame)
-            and var_name in df_descriptions  # ✅ Only track if LLM provided a description
+            and var_name in df_descriptions  # Only track if LLM provided a description
             and var_name not in injected_names
             and var_name not in ledger
         ):
@@ -416,10 +466,10 @@ def execute_code(state):
                 }
                 dfs.append({"name": var_name, "data": val, "description": description})
             except Exception as e:
-                print(f"⚠️ Error summarizing new DataFrame '{var_name}': {e}")
+                print(f"Error summarizing new DataFrame '{var_name}': {e}")
 
 
-    print("\n🚀 Execution Output:\n")
+    print("\n Execution Output:\n")
 
     return {
         "execution_output": output,
@@ -430,22 +480,6 @@ def execute_code(state):
         "recommended_analysis": recommended_analysis,
         "figure_paths": figure_paths
     }
-
-"""
-def handle_followup(followup_query, previous_state):
-    new_state = {
-        "dfs": previous_state["dfs"],
-        "context_ledger": previous_state["context_ledger"],
-        "user_query": followup_query,
-    }
-
-    updated_state = graph.invoke(new_state)
-    # Re-analyze to get fresh analysis for follow-up UI display
-    analysis_state = analyze_data(updated_state)
-    updated_state["analysis"] = analysis_state.get("analysis", "")
-
-    return updated_state  # ← Return the updated state to caller
-"""
 
 def handle_followup(followup_query, previous_state):
     new_state = {
@@ -468,10 +502,7 @@ def handle_followup(followup_query, previous_state):
     return final_state
 
 
-
-
-
-# 🧠 LangGraph Workflow Definition
+# LangGraph Workflow Definition
 workflow = StateGraph(dict)
 workflow.add_node("analyze_data", RunnableLambda(analyze_data))
 workflow.add_node("generate_code", RunnableLambda(generate_code))
@@ -482,22 +513,3 @@ workflow.add_edge("analyze_data", "generate_code")
 workflow.add_edge("generate_code", "execute_code")
 
 graph = workflow.compile()
-
-"""
-# 🧪 Sample Usage
-if __name__ == "__main__":
-
-    df1 = pd.read_csv("df1.csv")
-    df2 = pd.read_csv("df2.csv")
-
-    dfs = [
-        {"name": "supplier_spend_df", "data": df1, "description": "Q1 Supplier Spend Data"},
-        {"name": "supplier_risk_scores_df", "data": df2, "description": "Supplier Risk Assessment Scores"}
-    ]
-
-    #user_query = "Find high-risk suppliers who also had the highest spends."
-    #user_query = "Create a pie chart showing total spend amount per supplier, highlighting suppliers with high risk levels."
-    user_query =  "What kind of different analysis can be done using these dataframes."
-    initial_state = {"dfs": dfs, "user_query": user_query}
-    final_state = graph.invoke(initial_state)
-"""
