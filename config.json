@@ -1,0 +1,7 @@
+{
+  "theme": "dark",
+  "llm_backend": "groq",
+  "groq_api_key": "",
+  "openai_api_key": "",
+  "ollama_model": "llama3.1:8b"
+}
