@@ -2,6 +2,8 @@
 
 An intelligent desktop application for data analysis powered by AI. Upload datasets, ask questions, and get AI-generated analysis code with automatic execution, all with a beautiful Tkinter GUI.
 
+![Home Screen](https://github.com/Ashad-Ahmed/AIDataAnalyst/blob/main/DemoScreenShots_AIDataAnalyst/HomeScreen.png?raw=true)
+
 ## 📋 Table of Contents
 
 - [Features](#features)
