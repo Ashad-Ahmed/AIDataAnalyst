@@ -390,40 +390,40 @@ Output: Generated Python code that does exactly that
 
 ### Chat Mode
 ```
-[Screenshot Placeholder]
 - User query at top
 - AI response in middle
 - Inline visualization
 - Summary and Code tabs at bottom
 ```
+![Chat Screen](https://github.com/Ashad-Ahmed/AIDataAnalyst/blob/main/DemoScreenShots_AIDataAnalyst/Query%20And%20Response.png?raw=true)
 
 ### Settings Dialog
 ```
-[Screenshot Placeholder]
 - Theme selection (Dark/Light)
 - LLM Backend selection (Groq/OpenAI/Ollama)
 - API Key input fields
 - Save/Cancel buttons
 ```
+![Setting](https://github.com/Ashad-Ahmed/AIDataAnalyst/blob/main/DemoScreenShots_AIDataAnalyst/Settings.png?raw=true)
 
 ### Data Transformations Mode
 ```
-[Screenshot Placeholder]
 - DataFrame selector
 - Python/LLM mode toggle
 - Code editor
 - Preview panel
 - Apply button
 ```
+![Data Transformation](https://github.com/Ashad-Ahmed/AIDataAnalyst/blob/main/DemoScreenShots_AIDataAnalyst/Data%20Transformation%20Mode.png?raw=true)
 
 ### Sidebar with Datasets
 ```
-[Screenshot Placeholder]
 - "IN CONTEXT" label
 - Loaded DataFrames list
 - Upload Files button
 - Remove Selected button
 ```
+![Side Bar](https://github.com/Ashad-Ahmed/AIDataAnalyst/blob/main/DemoScreenShots_AIDataAnalyst/SideBar.png?raw=true)
 
 ---
 
